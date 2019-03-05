@@ -20,4 +20,7 @@ var (
 	// been called, causing the stack or queue to close, as well as
 	// its underlying database.
 	ErrDBClosed = errors.New("goque: Database is closed")
+
+	// ErrNoVacuum is returned when StopVacuum is called but there was no Vacuum.
+	ErrNoVacuum = errors.New("goque: No Vacuum set")
 )

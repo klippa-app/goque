@@ -5,18 +5,21 @@ import (
 	"encoding/gob"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/syndtr/goleveldb/leveldb"
+	"github.com/syndtr/goleveldb/leveldb/util"
 )
 
 // Queue is a standard FIFO (first in, first out) queue.
 type Queue struct {
 	sync.RWMutex
-	DataDir string
-	db      *leveldb.DB
-	head    uint64
-	tail    uint64
-	isOpen  bool
+	DataDir      string
+	db           *leveldb.DB
+	head         uint64
+	tail         uint64
+	isOpen       bool
+	vacuumTicker *time.Ticker
 }
 
 // OpenQueue opens a queue if one exists at the given directory. If one
@@ -219,6 +222,48 @@ func (q *Queue) Length() uint64 {
 	return q.tail - q.head
 }
 
+func (q *Queue) StartVacuum(interval time.Duration) error {
+	q.Lock()
+	defer q.Unlock()
+
+	// Check if queue is closed.
+	if !q.isOpen {
+		return ErrDBClosed
+	}
+
+	ticker := time.NewTicker(interval)
+	q.vacuumTicker = ticker
+	go func() {
+		for {
+			select {
+			case <-ticker.C:
+				q.db.CompactRange(util.Range{})
+			}
+		}
+	}()
+
+	return nil
+}
+
+func (q *Queue) StopVacuum() error {
+	q.Lock()
+	defer q.Unlock()
+
+	// Check if queue is closed.
+	if !q.isOpen {
+		return ErrDBClosed
+	}
+
+	if q.vacuumTicker == nil {
+		return ErrNoVacuum
+	}
+
+	q.vacuumTicker.Stop()
+	q.vacuumTicker = nil
+
+	return nil
+}
+
 // Close closes the LevelDB database of the queue.
 func (q *Queue) Close() error {
 	q.Lock()
@@ -227,6 +272,10 @@ func (q *Queue) Close() error {
 	// Check if queue is already closed.
 	if !q.isOpen {
 		return nil
+	}
+
+	if q.vacuumTicker != nil {
+		q.vacuumTicker.Stop()
 	}
 
 	// Close the LevelDB database.
@@ -239,6 +288,7 @@ func (q *Queue) Close() error {
 	q.head = 0
 	q.tail = 0
 	q.isOpen = false
+	q.vacuumTicker = nil
 
 	return nil
 }
